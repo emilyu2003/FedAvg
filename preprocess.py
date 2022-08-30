@@ -1,6 +1,7 @@
 import numpy as np
-import gzip
-import os
+from torchvision import transforms  # 对图像进行原始的数据处理的工具
+from torchvision import datasets  # 获取数据
+from torch.utils.data import DataLoader  # 加载数据
 
 
 class GetDataSet(object):
@@ -10,10 +11,12 @@ class GetDataSet(object):
         self.train_data = None
         self.train_label = None
         self.train_data_size = None
+        self.train_loader = None
         # 测试数据集
         self.test_data = None
         self.test_label = None
         self.test_data_size = None
+        self.test_loader = None
 
         self._index_in_train_epoch = 0
 
@@ -25,77 +28,75 @@ class GetDataSet(object):
         # isIID:随机600个样本/Client
 
         # 加载数据集
-        data_dir = r'.\dataSet'
-        train_images_path = os.path.join(data_dir, 'train-images-idx3-ubyte.gz')
-        train_labels_path = os.path.join(data_dir, 'train-labels-idx1-ubyte.gz')
-        test_images_path = os.path.join(data_dir, 't10k-images-idx3-ubyte.gz')
-        test_labels_path = os.path.join(data_dir, 't10k-labels-idx1-ubyte.gz')
+        batch_size = 100  # 设置训练的batch为10
+        # 把训练数据转换成torch中的tensor
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
 
-        train_images = extract_images(train_images_path)
-        # train_images.shape:(60000, 28, 28, 1)
+        train_dataset = datasets.MNIST(root='./dataset',
+                                       train=True,
+                                       download=False,
+                                       transform=transform)
 
-        train_labels = extract_labels(train_labels_path)
-        # train_labels.shape:(60000, 10)
+        test_dataset = datasets.MNIST(root='./dataset',
+                                      train=False,
+                                      download=False,
+                                      transform=transform)
 
-        test_images = extract_images(test_images_path)
-        # test_images.shape:(10000, 28, 28, 1)
+        self.train_data_size = len(train_dataset)
+        self.test_data_size = len(test_dataset)
 
-        test_labels = extract_labels(test_labels_path)
-        # test_labels.shape:(10000, 10)
+        train_data_np = train_dataset.data.numpy()
+        train_label_np = train_dataset.targets.numpy()
+        train_label_np = oneHot(train_label_np)
 
-        self.train_data_size = train_images.shape[0]
-        self.test_data_size = test_images.shape[0]
+        test_data_np = test_dataset.data.numpy()
+        test_label_np = test_dataset.targets.numpy()
+        test_label_np = oneHot(test_label_np)
 
-        # 把数据集压缩成60000 * 784
-        train_images = train_images.reshape(train_images.shape[0], train_images.shape[1] * train_images.shape[2])
-        test_images = test_images.reshape(test_images.shape[0], test_images.shape[1] * test_images.shape[2])
+        train_data_np = train_data_np.reshape(train_data_np.shape[0], train_data_np.shape[1] * train_data_np.shape[2])
+        test_data_np = test_data_np.reshape(test_data_np.shape[0], test_data_np.shape[1] * test_data_np.shape[2])
 
         # 进行归一化处理(数组每个位置都乘上1/255)
-        train_images = train_images.astype(np.float32)
-        train_images = np.multiply(train_images, 1.0 / 255.0)
-        test_images = test_images.astype(np.float32)
-        test_images = np.multiply(test_images, 1.0 / 255.0)
+        train_data_np = train_data_np.astype(np.float32)
+        train_data_np = np.multiply(train_data_np, 1.0 / 255.0)
+        test_data_np = test_data_np.astype(np.float32)
+        test_data_np = np.multiply(test_data_np, 1.0 / 255.0)
+
+        # 添加噪声
+        sensitivity = 1
+        eps = 8
+        train_data_np = laplaceMech(train_data_np, sensitivity, eps)
+        self.test_data = test_data_np
+        self.test_label = test_label_np
 
         if isIID:  # 随机
             order = np.arange(self.train_data_size)
             np.random.shuffle(order)
-            self.train_data = train_images[order]
-            self.train_label = train_labels[order]
+            self.train_data = train_data_np[order]
+            self.train_label = train_label_np[order]
         else:  # 按标签排序
-            labels = np.argmax(train_labels, axis=1)
+            labels = np.argmax(train_label_np, axis=1)
             order = np.argsort(labels)
-            self.train_data = train_images[order]
-            self.train_label = train_labels[order]
+            self.train_data = train_data_np[order]
+            self.train_label = train_label_np[order]
 
-        self.test_data = test_images
-        self.test_label = test_labels
+        self.train_loader = DataLoader(self.train_data,
+                                       shuffle=False,
+                                       batch_size=batch_size)
+        self.test_loader = DataLoader(self.test_data,
+                                      shuffle=False,
+                                      batch_size=batch_size)
 
-
-def _read32(bytestream):
-    dt = np.dtype(np.uint32).newbyteorder('>')
-    return np.frombuffer(bytestream.read(4), dtype=dt)[0]
-
-
-def extract_images(filename):
-    """Extract the images into a 4D uint8 numpy array [index, y, x, depth]."""
-    print('Extracting', filename)
-    with gzip.open(filename) as bytestream:
-        magic = _read32(bytestream)
-        if magic != 2051:
-            raise ValueError(
-                'Invalid magic number %d in MNIST image file: %s' %
-                (magic, filename))
-        num_images = _read32(bytestream)
-        rows = _read32(bytestream)
-        cols = _read32(bytestream)
-        buf = bytestream.read(rows * cols * num_images)
-        data = np.frombuffer(buf, dtype=np.uint8)
-        data = data.reshape(num_images, rows, cols, 1)
-        return data
+        '''print(self.train_data.shape)
+        print(self.test_data.shape)
+        print(self.train_label.shape)
+        print(self.test_label.shape)'''
 
 
-def dense_to_one_hot(labels_dense, num_classes=10):
-    """Convert class labels from scalars to one-hot vectors."""
+def oneHot(labels_dense, num_classes=10):
     num_labels = labels_dense.shape[0]
     index_offset = np.arange(num_labels) * num_classes
     labels_one_hot = np.zeros((num_labels, num_classes))
@@ -103,19 +104,21 @@ def dense_to_one_hot(labels_dense, num_classes=10):
     return labels_one_hot
 
 
-def extract_labels(filename):
-    """Extract the labels into a 1D uint8 numpy array [index]."""
-    print('Extracting', filename)
-    with gzip.open(filename) as bytestream:
-        magic = _read32(bytestream)
-        if magic != 2049:
-            raise ValueError(
-                'Invalid magic number %d in MNIST label file: %s' %
-                (magic, filename))
-        num_items = _read32(bytestream)
-        buf = bytestream.read(num_items)
-        labels = np.frombuffer(buf, dtype=np.uint8)
-        return dense_to_one_hot(labels)
+def noisyCount(sensitivety, epsilon):
+    beta = sensitivety / epsilon
+    u1 = np.random.random()
+    u2 = np.random.random()
+    if u1 <= 0.5:
+        n_value = -beta * np.log(1. - u2)
+    else:
+        n_value = beta * np.log(u2)
+    return n_value
+
+
+def laplaceMech(data, sensitivity, epsilon):
+    for i in range(len(data)):
+        data[i] += noisyCount(sensitivity, epsilon)
+    return data
 
 
 if __name__ == "__main__":
@@ -126,6 +129,6 @@ if __name__ == "__main__":
         print('the type of data is numpy ndarray')
     else:
         print('the type of data is not numpy ndarray')
-    print('the shape of the train data set is {}'.format(mnistDataSet.train_data.shape))
-    print('the shape of the test data set is {}'.format(mnistDataSet.test_data.shape))
-    print(mnistDataSet.train_label[0:100], mnistDataSet.train_label[11000:11100])
+    # print('the shape of the train data set is {}'.format(mnistDataSet.train_data.shape))
+    # print('the shape of the test data set is {}'.format(mnistDataSet.test_data.shape))
+    # print(mnistDataSet.train_label[0:100], mnistDataSet.train_label[11000:11100])

@@ -1,9 +1,10 @@
 import csv
 import numpy as np
 import torch
-from opacus import PrivacyEngine
 from torch.utils.data import TensorDataset
 from torch.utils.data import DataLoader
+from torch import nn
+
 from preprocess import GetDataSet
 
 
@@ -21,9 +22,11 @@ class Client(object):
         # 加载本地数据
         self.train_dl = DataLoader(self.train_ds, batch_size=localBatchSize, shuffle=True)
 
-        epoch_loss = []
+        epochLoss = []
+        epochAcc = []
         for epoch in range(localEpoch):
-            batch_loss = []
+            batchLoss = []
+            batchAcc = []
             for data, label in self.train_dl:
                 # 加载到GPU上(如果有的话)
                 data, label = data.to(self.dev), label.to(self.dev)
@@ -35,12 +38,17 @@ class Client(object):
                 loss = lossFun(params, label)
                 # 反向传播
                 loss.backward()
+                # 裁剪梯度
+                nn.utils.clip_grad_norm_(Net.parameters(), max_norm=4, norm_type=2)
                 # 计算并更新梯度
                 opti.step()
-                batch_loss.append(loss.item())
-            epoch_loss.append(sum(batch_loss) / len(batch_loss))
+                batchLoss.append(loss.item())
+                params = torch.argmax(params, dim=1)
+                batchAcc.append((params == label).float().mean())
+            epochLoss.append(sum(batchLoss) / len(batchLoss))
+            epochAcc.append(sum(batchAcc) / len(batchAcc))
         # 返回当前Client基于自己的数据训练得到的新的模型参数和loss（用于作图）
-        return Net.state_dict(), sum(epoch_loss) / len(epoch_loss)
+        return Net.state_dict(), sum(epochLoss) / len(epochLoss), sum(epochAcc) / len(epochAcc)
 
 
 class ClientsGroup(object):

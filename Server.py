@@ -2,7 +2,6 @@ import copy
 import os
 import argparse
 
-from opacus import PrivacyEngine
 from tqdm import tqdm
 import numpy as np
 import torch
@@ -33,7 +32,7 @@ parser.add_argument('-dataset', "--dataset", type=str, default="mnist", help="�
 parser.add_argument('-vf', "--val_freq", type=int, default=1, help="model validation frequency(of communications)")
 parser.add_argument('-sf', '--save_freq', type=int, default=10, help='global model save frequency(of communication)')
 # num_comm 通信次数
-parser.add_argument('-ncomm', '--num_comm', type=int, default=100, help='number of communications')
+parser.add_argument('-ncomm', '--num_comm', type=int, default=50, help='number of communications')
 parser.add_argument('-sp', '--save_path', type=str, default='./checkpoints', help='the saving path of checkpoints')
 parser.add_argument('-iid', '--IID', type=int, default=0, help='the way to allocate data to clients')
 
@@ -67,7 +66,7 @@ if __name__ == "__main__":
 
     net = net.to(dev)
 
-    loss_func = F.cross_entropy
+    lossFunc = F.cross_entropy
     # 使用Adam下降法
     opti = optim.Adam(net.parameters(), lr=args['learning_rate'])
 
@@ -88,63 +87,74 @@ if __name__ == "__main__":
     '''
 
     # 每次随机选取一定的Clients
-    num_in_comm = int(max(args['num_of_clients'] * args['cfraction'], 1))
+    numInComm = int(max(args['num_of_clients'] * args['cfraction'], 1))
 
     # 得到全局的参数
-    global_parameters = {}
+    globalParams = {}
     for key, var in net.state_dict().items():
-        global_parameters[key] = var.clone()
+        globalParams[key] = var.clone()
 
-    loss_train = []
-    accuracies = []
+    trainLoss = []
+    testLoss = []
+    trainAcc = []
+    testAcc = []
     # 通信
     for i in range(args['num_comm']):
-        print("communicate round {}".format(i + 1))
+        print("communication round {}".format(i + 1))
 
         # 对随机选的将100个客户端进行随机排序
         order = np.random.permutation(args['num_of_clients'])
-        clients_in_comm = ['client{}'.format(i) for i in order[0:num_in_comm]]
+        clients_in_comm = ['client{}'.format(i) for i in order[0:numInComm]]
 
-        sum_parameters = None
-        loss_locals = []
+        sumParams = None
+        lossLocals = []
+        accLocals = []
         # 每个Client基于当前模型参数和自己的数据训练并更新模型
         for client in tqdm(clients_in_comm):
             # 获取当前Client训练得到的参数
-            local_parameters, loss = myClients.clients_set[client].localUpdate(args['epoch'], args['batchsize'], net,
-                                                                               loss_func, opti, global_parameters)
+            localParams, loss, acc = myClients.clients_set[client].localUpdate(args['epoch'], args['batchsize'],
+                                                                               net,
+                                                                               lossFunc, opti, globalParams)
             # 对所有的Client返回的参数累加
-            if sum_parameters is None:
-                sum_parameters = {}
-                for key, var in local_parameters.items():
-                    sum_parameters[key] = var.clone()
+            if sumParams is None:
+                sumParams = {}
+                for key, var in localParams.items():
+                    sumParams[key] = var.clone()
             else:
-                for var in sum_parameters:
-                    sum_parameters[var] = sum_parameters[var] + local_parameters[var]
-            loss_locals.append(copy.deepcopy(loss))
+                for var in sumParams:
+                    sumParams[var] = sumParams[var] + localParams[var]
+            lossLocals.append(copy.deepcopy(loss))
+            accLocals.append(copy.deepcopy(acc))
 
         # 取平均值
-        for var in global_parameters:
-            global_parameters[var] = (sum_parameters[var] / num_in_comm)
+        for var in globalParams:
+            globalParams[var] = (sumParams[var] / numInComm)
 
         # 作图
-        loss_avg = sum(loss_locals) / len(loss_locals)
-        print('Round {}, Average loss {}'.format(iter, loss_avg))
-        loss_train.append(loss_avg)
+        lossAvg = sum(lossLocals) / len(lossLocals)
+        accAvg = sum(accLocals) / len(accLocals)
+        print('Round {}, Average loss {}'.format(iter, lossAvg))
+        trainLoss.append(lossAvg)
+        trainAcc.append(float(accAvg))
 
         # 测试
         with torch.no_grad():
             if (i + 1) % args['val_freq'] == 0:
-                net.load_state_dict(global_parameters, strict=True)
-                sum_accu = 0
+                net.load_state_dict(globalParams, strict=True)
+                sumAcc = 0
                 num = 0
+                batch_loss = []
                 for data, label in testDataLoader:
                     data, label = data.to(dev), label.to(dev)
                     params = net(data)
+                    loss = lossFunc(params, label)
                     params = torch.argmax(params, dim=1)
-                    sum_accu += (params == label).float().mean()
+                    sumAcc += (params == label).float().mean()
                     num += 1
-                print('accuracy: {}'.format(sum_accu / num))
-                accuracies.append(1 - sum_accu / num)
+                    batch_loss.append(loss.item())
+                print('accuracy: {}'.format(sumAcc / num))
+                testAcc.append(float(sumAcc / num))
+                testLoss.append(sum(batch_loss) / len(batch_loss))
 
         if (i + 1) % args['save_freq'] == 0:
             torch.save(net, os.path.join(args['save_path'],
@@ -156,6 +166,35 @@ if __name__ == "__main__":
                                                                                                 args['cfraction'])))
     # 绘图
     plt.figure()
-    plt.plot(range(len(accuracies)), accuracies)
-    plt.ylabel('test_accuracy')
+    plt.plot(range(len(trainAcc)), trainAcc, label='trainAcc')
+    plt.plot(range(len(testAcc)), testAcc, '--', label='testAcc')
+    plt.ylabel('accuracy')
+    plt.legend()
     plt.show()
+
+    plt.figure()
+    plt.plot(range(len(trainLoss)), trainLoss, label='trainLoss')
+    plt.plot(range(len(testLoss)), testLoss, '--', label='testLoss')
+    plt.ylabel('loss')
+    plt.legend()
+    plt.show()
+
+    file = open(r".\trainAccuracyRecord.txt", "a")
+    file.write(str(trainAcc))
+    file.write("\n")
+    file.close()
+
+    file = open(r".\trainLossRecord.txt", "a")
+    file.write(str(trainLoss))
+    file.write("\n")
+    file.close()
+
+    file = open(r".\testAccuracyRecord.txt", "a")
+    file.write(str(testAcc))
+    file.write("\n")
+    file.close()
+
+    file = open(r".\testLossRecord.txt", "a")
+    file.write(str(testLoss))
+    file.write("\n")
+    file.close()
