@@ -67,7 +67,7 @@ class GetDataSet(object):
 
         # 添加噪声
         sensitivity = 1
-        eps = 8
+        eps = 0.5
         train_data_np = laplaceMech(train_data_np, sensitivity, eps)
         self.test_data = test_data_np
         self.test_label = test_label_np

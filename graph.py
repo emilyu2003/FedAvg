@@ -16,7 +16,7 @@ def readTXT(fileName, graphName, lineName):
             for i in range(len(tmp)):
                 tmp[i] = eval(tmp[i])
             print(tmp)
-            plt.plot(range(len(tmp)), tmp, label=(lineName + eps[k]))
+            plt.plot(range(len(tmp)), tmp, label=("eps = " + eps[k]))
             k += 1
 
     plt.ylabel(graphName)
