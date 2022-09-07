@@ -32,14 +32,25 @@ parser.add_argument('-dataset', "--dataset", type=str, default="mnist", help="�
 parser.add_argument('-vf', "--val_freq", type=int, default=1, help="model validation frequency(of communications)")
 parser.add_argument('-sf', '--save_freq', type=int, default=10, help='global model save frequency(of communication)')
 # num_comm 通信次数
-parser.add_argument('-ncomm', '--num_comm', type=int, default=50, help='number of communications')
+parser.add_argument('-ncomm', '--num_comm', type=int, default=20, help='number of communications')
 parser.add_argument('-sp', '--save_path', type=str, default='./checkpoints', help='the saving path of checkpoints')
 parser.add_argument('-iid', '--IID', type=int, default=0, help='the way to allocate data to clients')
+
+parser.add_argument('-sigma', '--sigma', type=float, default=0.01)
 
 
 def test_mkdir(path):
     if not os.path.isdir(path):
         os.mkdir(path)
+
+
+def addNoise(params):
+    # guass
+    noise = torch.FloatTensor(params.shape).normal_(0, args['sigma'])
+
+    # laplace
+    # noise = torch.tensor(np.random.laplace(0, args['sigma'], params.shape))
+    return params.add_(noise)
 
 
 if __name__ == "__main__":
@@ -120,9 +131,13 @@ if __name__ == "__main__":
                 sumParams = {}
                 for key, var in localParams.items():
                     sumParams[key] = var.clone()
+                    # 添加噪声
+                    sumParams[key] = addNoise(sumParams[key])
             else:
-                for var in sumParams:
-                    sumParams[var] = sumParams[var] + localParams[var]
+                for key in sumParams:
+                    # 添加噪声
+                    sumParams[key].add_(addNoise(localParams[key]))  # BUG!!!!!
+                    # sumParams[var] = sumParams[var] + localParams[var]
             lossLocals.append(copy.deepcopy(loss))
             accLocals.append(copy.deepcopy(acc))
 

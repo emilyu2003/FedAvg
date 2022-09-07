@@ -5,6 +5,13 @@
 - CPU：AMD Ryzen 5 4600H with Radeon Graphics            3.00 GHz
 - 编辑器使用pycharm
 
+### 文件结构
+
+![image-20220831001324397](ReadMe/image-20220831001324397.png)
+
+plot：存储图像
+graph.py：从四个txt读取数据，绘制图像
+
 ### 实验记录
 
 参数；non-IID, E = 1, B = 10, model = mnist_cnn, learning_rate = 0.01, num_comm = 50, num_of_clients = 600, C = 0.1

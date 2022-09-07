@@ -65,10 +65,6 @@ class GetDataSet(object):
         test_data_np = test_data_np.astype(np.float32)
         test_data_np = np.multiply(test_data_np, 1.0 / 255.0)
 
-        # 添加噪声
-        sensitivity = 1
-        eps = 0.5
-        train_data_np = laplaceMech(train_data_np, sensitivity, eps)
         self.test_data = test_data_np
         self.test_label = test_label_np
 
